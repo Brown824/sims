@@ -1,0 +1,8 @@
+{
+  "<PAD>": 0,
+  "<OOV>": 1,
+  "umeshinda": 2,
+  "zawadi": 3,
+  "tuma": 4,
+  "pesa": 5
+}

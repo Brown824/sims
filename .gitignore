@@ -1,0 +1,86 @@
+# ─────────────────────────────────────────────
+#  SIMS .gitignore
+# ─────────────────────────────────────────────
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+venv/
+env/
+.venv/
+.env
+.env.*
+!.env.example
+
+# Data — large files, never commit raw datasets
+backend/data/raw/
+backend/data/processed/master.csv
+backend/data/processed/train.csv
+backend/data/processed/test.csv
+backend/data/processed/val.csv
+
+# Trained Models — track via DVC or Git LFS if needed
+backend/data/models/*.h5
+backend/data/models/*.tflite
+backend/data/models/*.pkl
+!backend/data/models/.gitkeep
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Pytest / Coverage
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# MyPy
+.mypy_cache/
+
+# Node / React Native
+node_modules/
+mobile-app/node_modules/
+.expo/
+mobile-app/.expo/
+dist/
+mobile-app/dist/
+*.apk
+*.aab
+*.ipa
+
+# Expo
+mobile-app/.expo-shared/
+mobile-app/web-build/
+
+# Docker
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+backend/logs/
+
+# MongoDB
+*.db
+*.sqlite3
+backend/sims.db
