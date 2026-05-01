@@ -134,6 +134,18 @@ async def get_latest_vocab():
         filename="vocab.json"
     )
 
+@router.get("/model/lite")
+async def get_latest_lite_model():
+    """Download the latest offline sims_lite_model.json."""
+    lite_path = settings.MODELS_DIR / "sims_lite_model.json"
+    if not lite_path.exists():
+        raise HTTPException(status_code=404, detail="Lite model file not found")
+    return FileResponse(
+        path=lite_path, 
+        media_type="application/json", 
+        filename="sims_lite_model.json"
+    )
+
 @router.post("", response_model=PredictResponse)
 async def predict(request: PredictRequest, _=Depends(rate_limit)):
     """
@@ -179,7 +191,7 @@ async def predict(request: PredictRequest, _=Depends(rate_limit)):
     if model_loaded:
         try:
             token_seq = preprocessor.encode(request.sms_text)
-            spam_score = model.predict_single(token_seq)
+            spam_score = model.predict_single(token_seq, raw_text=request.sms_text)
         except Exception as e:
             # Model error → fallback
             spam_score = _heuristic_predict(request.sms_text)

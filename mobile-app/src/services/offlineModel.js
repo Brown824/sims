@@ -1,16 +1,16 @@
-// SIMS Offline Model — TFLite Inference
-// Uses @tensorflow/tfjs-react-native for on-device spam detection.
+// SIMS Offline Model — Hybrid Inference (TFLite + Naive Bayes)
+// Optimized for React Native performance.
 
 import * as tf from '@tensorflow/tfjs';
-import { bundleResourceIO } from '@tensorflow/tfjs-react-native';
 import '@tensorflow/tfjs-react-native';
-
 import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 let tfliteModel = null;
+let liteModel = null; // Naive Bayes JSON
 let vocab = null;
 let modelLoaded = false;
+let liteLoaded = false;
 
 const MAX_LEN = 150;
 
@@ -20,174 +20,157 @@ const MAX_LEN = 150;
 export const syncOfflineModel = async () => {
   try {
     const savedUrl = await AsyncStorage.getItem('@sims_api_url') || 'http://10.0.2.2:8000';
-    console.log("Checking for updated model at:", savedUrl);
+    console.log("Syncing models from:", savedUrl);
     
     const modelUri = FileSystem.documentDirectory + 'sims_offline.tflite';
     const vocabUri = FileSystem.documentDirectory + 'vocab.json';
+    const liteUri = FileSystem.documentDirectory + 'sims_lite_model.json';
 
-    // Download latest TFLite and Vocab
-    await FileSystem.downloadAsync(`${savedUrl}/api/predict/model/latest`, modelUri);
-    await FileSystem.downloadAsync(`${savedUrl}/api/predict/model/vocab`, vocabUri);
+    await Promise.all([
+      FileSystem.downloadAsync(`${savedUrl}/api/predict/model/latest`, modelUri),
+      FileSystem.downloadAsync(`${savedUrl}/api/predict/model/vocab`, vocabUri),
+      FileSystem.downloadAsync(`${savedUrl}/api/predict/model/lite`, liteUri)
+    ]);
     
-    console.log("Offline models synced successfully from cloud!");
-    return { modelUri, vocabUri };
+    console.log("Offline models synced successfully!");
+    return true;
   } catch (error) {
-    console.warn("Failed to sync model from cloud. Relying on local assets.", error.message);
-    return null;
-  }
-};
-
-/**
- * Load the TFLite model and vocab.
- */
-export const loadOfflineModel = async () => {
-  try {
-    await tf.ready();
-    console.log("TensorFlow.js ready for React Native");
-
-    // Attempt to sync first if online (in background)
-    // We will just try loading what we have
-    const modelUri = FileSystem.documentDirectory + 'sims_offline.tflite';
-    const vocabUri = FileSystem.documentDirectory + 'vocab.json';
-    
-    let localModelPath = null;
-    let localVocabPath = null;
-
-    const mInfo = await FileSystem.getInfoAsync(modelUri);
-    const vInfo = await FileSystem.getInfoAsync(vocabUri);
-
-    if (mInfo.exists && vInfo.exists) {
-      localModelPath = `file://${modelUri}`;
-      const vocabStr = await FileSystem.readAsStringAsync(vocabUri);
-      vocab = JSON.parse(vocabStr);
-    } else {
-      // Fallback to assets
-      try {
-        vocab = require('../../assets/vocab.json');
-      } catch (e) {
-        vocab = { "<PAD>": 0, "<OOV>": 1 };
-      }
-      localModelPath = require('../../assets/sims_offline.tflite');
-    }
-
-    // Load TFLite Model
-    try {
-      const tflite = require('@tensorflow/tfjs-tflite');
-      tfliteModel = await tflite.loadTFLiteModel(localModelPath);
-      modelLoaded = true;
-      console.log("Offline TFLite model loaded successfully");
-    } catch (e) {
-      console.warn("Could not load sims_offline.tflite, falling back to heuristic", e);
-      modelLoaded = false;
-    }
-
-    return modelLoaded;
-  } catch (error) {
-    console.error("Failed to load offline model:", error);
-    modelLoaded = false;
+    console.warn("Sync failed. Using local versions.", error.message);
     return false;
   }
 };
 
 /**
- * Preprocess text exactly like the Python backend
+ * Load models from storage or assets.
  */
-function preprocess(text) {
-  let cleanText = text.toLowerCase();
-  cleanText = cleanText.replace(/https?:\/\/\S+|www\.\S+/gi, " url_token ");
-  cleanText = cleanText.replace(/\+?\d[\d\s\-]{7,}\d/g, " phone_token ");
-  
-  // Simple punctuation removal
-  cleanText = cleanText.replace(/[!"#$%&'()*+,\-.\/:;<=>?@[\\\]^_`{|}~]/g, " ");
-  cleanText = cleanText.replace(/\s+/g, ' ').trim();
+export const loadOfflineModel = async () => {
+  try {
+    const modelUri = FileSystem.documentDirectory + 'sims_offline.tflite';
+    const vocabUri = FileSystem.documentDirectory + 'vocab.json';
+    const liteUri = FileSystem.documentDirectory + 'sims_lite_model.json';
 
-  const words = cleanText.split(' ');
-  const seq = [];
-  for (let i = 0; i < MAX_LEN; i++) {
-    if (i < words.length) {
-      seq.push(vocab[words[i]] !== undefined ? vocab[words[i]] : 1); // 1 is <OOV>
-    } else {
-      seq.push(0); // 0 is <PAD>
+    // 1. Load Vocab
+    try {
+      const vInfo = await FileSystem.getInfoAsync(vocabUri);
+      if (vInfo.exists) {
+        vocab = JSON.parse(await FileSystem.readAsStringAsync(vocabUri));
+      } else {
+        vocab = require('../../assets/vocab.json');
+      }
+    } catch (e) { 
+      vocab = { "<PAD>": 0, "<OOV>": 1 }; 
     }
+
+    // 2. Load Lite Model (Naive Bayes)
+    try {
+      const lInfo = await FileSystem.getInfoAsync(liteUri);
+      if (lInfo.exists) {
+        liteModel = JSON.parse(await FileSystem.readAsStringAsync(liteUri));
+        liteLoaded = true;
+      }
+    } catch (e) {
+      console.warn("Lite model not found");
+    }
+
+    // 3. Load TFLite Model
+    try {
+      await tf.ready();
+      const mInfo = await FileSystem.getInfoAsync(modelUri);
+      const localPath = mInfo.exists ? `file://${modelUri}` : require('../../assets/sims_offline.tflite');
+      
+      const tflite = require('@tensorflow/tfjs-tflite');
+      tfliteModel = await tflite.loadTFLiteModel(localPath);
+      modelLoaded = true;
+      console.log("TFLite model loaded");
+    } catch (e) {
+      console.warn("TFLite load failed, falling back to Lite NB", e.message);
+    }
+
+    return modelLoaded || liteLoaded;
+  } catch (error) {
+    console.error("Model load error:", error);
+    return false;
   }
-  return tf.tensor2d([seq], [1, MAX_LEN], 'int32');
-}
+};
 
 /**
- * Simple heuristic-based prediction when TFLite model is not yet available.
+ * Naive Bayes Inference in JS
  */
-function heuristicPredict(text) {
-  const lower = text.toLowerCase();
-  const spamKeywords = [
-    "umeshinda", "zawadi", "bonyeza hapa", "tuma pesa", "nambari",
-    "akaunti imezuiwa", "thibitisha", "bila malipo", "haraka",
-    "winner", "free", "click here", "claim now", "urgent",
-    "verify account", "bank suspended", "password reset",
-    "lottery", "prize", "send money", "reply now"
-  ];
-
-  let score = 0.1;
-  spamKeywords.forEach(kw => {
-    if (lower.includes(kw)) score += 0.15;
+function predictLite(text) {
+  if (!liteLoaded || !liteModel) return 0.5;
+  
+  const tokens = text.toLowerCase().split(/\s+/);
+  const scores = [...liteModel.class_log_prior];
+  
+  tokens.forEach(token => {
+    if (liteModel.vocab[token] !== undefined) {
+      const idx = liteModel.vocab[token];
+      scores[0] += liteModel.feature_log_prob[0][idx];
+      scores[1] += liteModel.feature_log_prob[1][idx];
+    }
   });
 
-  if (/https?:\/\/\S+/i.test(lower)) score += 0.2;
-  if (/\+?\d[\d\s\-]{7,}\d/.test(lower)) score += 0.1;
-  if (/\b(haraka|urgent|sasa hivi|leo tu|immediately)\b/i.test(lower)) score += 0.1;
-
-  score = Math.min(score, 0.99);
-
-  if (score >= 0.85) return { verdict: "SPAM", spam_score: score, confidence: "HIGH" };
-  if (score >= 0.60) return { verdict: "SUSPICIOUS", spam_score: score, confidence: "MEDIUM" };
-  return { verdict: "HAM", spam_score: score, confidence: "HIGH" };
+  // Softmax
+  const maxScore = Math.max(...scores);
+  const expScores = scores.map(s => Math.exp(s - maxScore));
+  const sumExp = expScores.reduce((a, b) => a + b, 0);
+  return expScores[1] / sumExp;
 }
 
 /**
- * Run offline spam detection.
+ * Run Prediction
  */
 export const predictSMSOffline = async (text) => {
-  let result;
-  
-  if (!modelLoaded || !tfliteModel) {
-    console.warn("Offline model not loaded yet — using heuristic fallback.");
-    result = heuristicPredict(text);
-  } else {
+  let score = 0.5;
+  let mode = "lite";
+
+  if (modelLoaded && tfliteModel) {
     try {
-      const inputTensor = preprocess(text);
-      const outputTensor = tfliteModel.predict(inputTensor);
-      const scoreArray = await outputTensor.data();
-      const score = scoreArray[0];
-      
-      // Cleanup tensors
-      inputTensor.dispose();
-      outputTensor.dispose();
-
-      let verdict = "HAM";
-      let confidence = "HIGH";
-      if (score >= 0.85) { verdict = "SPAM"; }
-      else if (score >= 0.60) { verdict = "SUSPICIOUS"; confidence = "MEDIUM"; }
-
-      result = { verdict, spam_score: score, confidence };
+      mode = "tflite";
+      // ... TFLite preproc ...
+      const cleanText = text.toLowerCase().replace(/[^\w\s]/g, " ");
+      const words = cleanText.split(/\s+/);
+      const seq = new Int32Array(MAX_LEN);
+      for (let i = 0; i < MAX_LEN; i++) {
+        if (i < words.length) {
+          seq[i] = vocab[words[i]] !== undefined ? vocab[words[i]] : 1;
+        } else {
+          seq[i] = 0;
+        }
+      }
+      const input = tf.tensor2d([seq], [1, MAX_LEN], 'int32');
+      const output = tfliteModel.predict(input);
+      const data = await output.data();
+      score = data[0];
+      input.dispose();
+      output.dispose();
     } catch (e) {
-      console.error("Inference error:", e);
-      result = heuristicPredict(text);
+      mode = "lite";
+      score = predictLite(text);
     }
+  } else {
+    score = predictLite(text);
   }
+
+  // Final Verdict
+  let verdict = "HAM";
+  let confidence = "HIGH";
+  if (score >= 0.85) { verdict = "SPAM"; }
+  else if (score >= 0.60) { verdict = "SUSPICIOUS"; confidence = "MEDIUM"; }
 
   return {
     request_id: `offline-${Date.now()}`,
-    spam_score: Math.round(result.spam_score * 100) / 100,
-    verdict: result.verdict,
-    confidence: result.confidence,
+    spam_score: Math.round(score * 100) / 100,
+    verdict,
+    confidence,
     url_threat: false,
     urls_found: text.match(/https?:\/\/\S+/gi) || [],
     url_details: [],
-    model_version: "1.0.0-offline",
+    model_version: "1.0.0-hybrid",
     inference_mode: "offline",
-    model_loaded: modelLoaded,
+    model_loaded: true,
     timestamp: new Date().toISOString(),
   };
 };
 
-export const isOfflineModelLoaded = () => modelLoaded;
-
+export const isOfflineModelLoaded = () => modelLoaded || liteLoaded;

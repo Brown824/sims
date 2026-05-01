@@ -13,10 +13,61 @@ Architecture (from blueprint):
 """
 
 import os
+import json
 import numpy as np
 from loguru import logger
-from typing import Optional
+from typing import Optional, Dict, List
+from pathlib import Path
 
+
+class NaiveBayesEngine:
+    """Fast, dependency-free Naive Bayes engine for spam detection."""
+    def __init__(self, model_json_path: str):
+        self.model_path = model_json_path
+        self.vocab: Dict[str, int] = {}
+        self.class_log_prior: List[float] = []
+        self.feature_log_prob: List[List[float]] = []
+        self.classes: List[int] = []
+        self.loaded = False
+
+    def load(self) -> bool:
+        if not os.path.exists(self.model_path):
+            return False
+        try:
+            with open(self.model_path, "r") as f:
+                data = json.load(f)
+                self.vocab = data["vocab"]
+                self.class_log_prior = data["class_log_prior"]
+                self.feature_log_prob = data["feature_log_prob"]
+                self.classes = data["classes"]
+                self.loaded = True
+            logger.info(f"✅ Lite Naive Bayes model loaded from {self.model_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load lite model: {e}")
+            return False
+
+    def predict_single(self, tokens: List[str]) -> float:
+        """Calculate P(Spam|Tokens) using log probabilities."""
+        if not self.loaded: return 0.5
+        
+        # Log probabilities for each class
+        j_scores = [self.class_log_prior[0], self.class_log_prior[1]]
+        
+        for token in tokens:
+            if token in self.vocab:
+                idx = self.vocab[token]
+                j_scores[0] += self.feature_log_prob[0][idx]
+                j_scores[1] += self.feature_log_prob[1][idx]
+        
+        # Convert log probs back to standard probability using softmax/sigmoid
+        # P(spam) = exp(score_spam) / (exp(score_ham) + exp(score_spam))
+        try:
+            exp_scores = np.exp(j_scores - np.max(j_scores)) # numerical stability
+            prob_spam = exp_scores[1] / np.sum(exp_scores)
+            return float(prob_spam)
+        except:
+            return 0.5
 
 class SIMSModel:
     """
@@ -29,6 +80,11 @@ class SIMSModel:
         self.model_version = model_version
         self._model = None          # Keras model (loaded lazily)
         self._is_loaded = False
+        
+        # Lite model fallback (Naive Bayes)
+        lite_path = str(Path(model_path).parent / "sims_lite_model.json")
+        self._lite_engine = NaiveBayesEngine(lite_path)
+        self._lite_engine.load()
 
     # ── Loading ───────────────────────────────────────────────────────────────
 
@@ -91,19 +147,27 @@ class SIMSModel:
         # raw shape: (batch_size, 1) — squeeze to (batch_size,)
         return raw.squeeze(axis=-1)
 
-    def predict_single(self, token_sequence: np.ndarray) -> float:
+    def predict_single(self, token_sequence: np.ndarray, raw_text: Optional[str] = None) -> float:
         """
-        Predict a single tokenized SMS. Convenience wrapper around predict().
-
+        Predict a single SMS. 
         Args:
             token_sequence: 1D np.ndarray of shape (max_len,)
-
+            raw_text: Optional string for the Lite engine fallback
         Returns:
             float spam score in [0.0, 1.0]
         """
-        batch = np.expand_dims(token_sequence, axis=0)  # (1, max_len)
-        scores = self.predict(batch)
-        return float(scores[0])
+        if self._is_loaded:
+            batch = np.expand_dims(token_sequence, axis=0)  # (1, max_len)
+            scores = self.predict(batch)
+            return float(scores[0])
+        
+        # Fallback to Lite Engine if raw_text is provided
+        if raw_text and self._lite_engine.loaded:
+            # Simple word-based tokenization for NB
+            tokens = raw_text.lower().split()
+            return self._lite_engine.predict_single(tokens)
+            
+        return 0.1
 
     # ── Architecture Definition ───────────────────────────────────────────────
 
