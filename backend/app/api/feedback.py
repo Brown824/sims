@@ -18,24 +18,21 @@ router = APIRouter()
 # ── Request / Response Schemas ───────────────────────────────────────────────
 
 class FeedbackRequest(BaseModel):
-    sms_id: str = Field(
+    request_id: str = Field(
         ...,
-        description="The request_id returned by /predict for this message.",
+        description="The request_id returned by /api/predict for this message.",
         example="550e8400-e29b-41d4-a716-446655440000",
     )
-    user_verdict: str = Field(
+    reported_verdict: str = Field(
         ...,
-        description="User's correction: 'spam' or 'ham'.",
-        example="ham",
+        description="User's correction: 'SPAM' or 'HAM'.",
+        example="HAM",
     )
-    original_score: Optional[float] = Field(
+    original_verdict: Optional[str] = Field(
         None,
-        ge=0.0,
-        le=1.0,
-        description="The spam_score originally returned by /predict.",
-        example=0.94,
+        description="The original verdict from /api/predict.",
     )
-    comment: Optional[str] = Field(
+    user_comment: Optional[str] = Field(
         None,
         max_length=500,
         description="Optional free-text comment from the user.",
@@ -63,10 +60,10 @@ async def submit_feedback(feedback: FeedbackRequest):
 
     # Persist feedback to DB
     await save_feedback(
-        request_id=feedback.sms_id,
-        reported_verdict=feedback.user_verdict,
-        original_verdict=None,  # Could be looked up from predictions table
-        user_comment=feedback.comment,
+        request_id=feedback.request_id,
+        reported_verdict=feedback.reported_verdict,
+        original_verdict=feedback.original_verdict,
+        user_comment=feedback.user_comment,
     )
 
     return FeedbackResponse(

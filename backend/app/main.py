@@ -39,9 +39,9 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 
 app.include_router(health_router, tags=["Health"])
-app.include_router(predict_router, prefix="/predict", tags=["Prediction"])
-app.include_router(feedback_router, prefix="/feedback", tags=["Feedback"])
-app.include_router(retrain_router, prefix="/retrain", tags=["Admin"])
+app.include_router(predict_router, prefix="/api/predict", tags=["Prediction"])
+app.include_router(feedback_router, prefix="/api/feedback", tags=["Feedback"])
+app.include_router(retrain_router, prefix="/api/retrain", tags=["Admin"])
 
 # ── Global Exception Handler ──────────────────────────────────────────────────
 

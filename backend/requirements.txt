@@ -14,13 +14,9 @@ aiohttp==3.9.5                 # async HTTP (alternative)
 pydantic==2.7.1
 pydantic-settings==2.2.1       # BaseSettings for .env loading
 
-# ── Machine Learning ─────────────────────────
-tensorflow
-keras==3.3.2                   # High-level Keras API
-scikit-learn==1.4.2            # metrics, SMOTE helpers
-imbalanced-learn==0.12.3       # RandomOverSampler, SMOTE
+# ── Machine Learning (inference only — training uses separate env) ──
 numpy==1.26.4
-scipy==1.13.0
+scikit-learn==1.4.2            # metrics helpers
 
 # ── NLP / Tokenization ───────────────────────
 transformers==4.40.1           # HuggingFace BERT tokenizers
@@ -33,10 +29,7 @@ openpyxl==3.1.2                # Excel file reading
 pyarrow==16.0.0                # Parquet support for HF datasets
 
 # ── Database ─────────────────────────────────
-motor==3.4.0                   # async MongoDB driver
-pymongo==4.7.2                 # sync MongoDB driver
-sqlalchemy==2.0.30             # ORM for SQLite
-aiosqlite==0.20.0              # async SQLite
+supabase==2.4.6                # Supabase Python client (PostgreSQL)
 
 # ── Security / Auth ──────────────────────────
 python-jose[cryptography]==3.3.0
