@@ -11,7 +11,7 @@ import SettingsScreen from './src/screens/SettingsScreen';
 import ReportScreen from './src/screens/ReportScreen';
 
 // Services
-import { loadOfflineModel } from './src/services/offlineModel';
+import { loadOfflineModel, syncOfflineModel } from './src/services/offlineModel';
 import { requestSMSPermissions } from './src/services/smsInterceptor';
 
 const Stack = createNativeStackNavigator();
@@ -32,6 +32,8 @@ export default function App() {
   useEffect(() => {
     async function init() {
       await requestSMSPermissions();
+      // Try to sync latest model from cloud
+      await syncOfflineModel();
       await loadOfflineModel();
       setModelReady(true);
     }

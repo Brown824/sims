@@ -1,83 +1,31 @@
 """
-SIMS Database — Real aiosqlite Implementation
+SIMS Database — Supabase Implementation
 Stores predictions and feedback for model retraining and analytics.
 """
 
-import aiosqlite
-import json
-from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from loguru import logger
 from app.config import settings
+from supabase import create_client, Client
+import json
+from datetime import datetime, timezone
 
-DB_PATH = settings.SQLITE_PATH
+SUPABASE_URL = "https://nfkukvpcrtgqdeoqlesr.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ma3VrdnBjcnRncWRlb3FsZXNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MjUyNTcsImV4cCI6MjA5MzIwMTI1N30.EE3ACs49oYa9VOkcQrha4SPzp4x1qIRa-aXKXe8VU3A"
 
-CREATE_PREDICTIONS_TABLE = """
-CREATE TABLE IF NOT EXISTS predictions (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    request_id      TEXT    NOT NULL UNIQUE,
-    sms_text        TEXT    NOT NULL,
-    phone_number    TEXT,
-    spam_score      REAL    NOT NULL,
-    verdict         TEXT    NOT NULL,
-    confidence      TEXT    NOT NULL,
-    url_threat      INTEGER NOT NULL DEFAULT 0,
-    urls_found      TEXT,           -- JSON array
-    model_version   TEXT,
-    inference_mode  TEXT,
-    created_at      TEXT    NOT NULL
-);
-"""
+_supabase: Optional[Client] = None
 
-CREATE_FEEDBACK_TABLE = """
-CREATE TABLE IF NOT EXISTS feedback (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    request_id      TEXT    NOT NULL,
-    reported_verdict TEXT   NOT NULL,
-    original_verdict TEXT,
-    user_comment    TEXT,
-    created_at      TEXT    NOT NULL,
-    FOREIGN KEY (request_id) REFERENCES predictions(request_id)
-);
-"""
-
-CREATE_URL_CACHE_TABLE = """
-CREATE TABLE IF NOT EXISTS url_cache (
-    url_hash        TEXT    PRIMARY KEY,
-    url             TEXT    NOT NULL,
-    is_malicious    INTEGER NOT NULL DEFAULT 0,
-    malicious_count INTEGER NOT NULL DEFAULT 0,
-    total_engines   INTEGER NOT NULL DEFAULT 0,
-    cached_at       TEXT    NOT NULL
-);
-"""
-
-_db: Optional[aiosqlite.Connection] = None
-
-
-async def get_db() -> aiosqlite.Connection:
-    """Return (and initialise) the global SQLite connection."""
-    global _db
-    if _db is None:
-        _db = await aiosqlite.connect(DB_PATH)
-        _db.row_factory = aiosqlite.Row
-        await _db.execute("PRAGMA journal_mode=WAL;")
-        await _db.execute("PRAGMA foreign_keys=ON;")
-        await _db.execute(CREATE_PREDICTIONS_TABLE)
-        await _db.execute(CREATE_FEEDBACK_TABLE)
-        await _db.execute(CREATE_URL_CACHE_TABLE)
-        await _db.commit()
-        logger.info(f"✅ SQLite connected: {DB_PATH}")
-    return _db
-
+async def get_db() -> Client:
+    """Return the global Supabase client."""
+    global _supabase
+    if _supabase is None:
+        _supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        logger.info("✅ Supabase client initialized")
+    return _supabase
 
 async def close_db() -> None:
-    global _db
-    if _db:
-        await _db.close()
-        _db = None
-        logger.info("SQLite connection closed.")
-
+    # Supabase HTTP client doesn't need explicit closing in this context
+    pass
 
 # ── Predictions ───────────────────────────────────────────────────────────────
 
@@ -93,45 +41,50 @@ async def save_prediction(
     model_version: str,
     inference_mode: str,
 ) -> None:
-    db = await get_db()
+    supabase = await get_db()
     try:
-        await db.execute(
-            """INSERT OR IGNORE INTO predictions
-               (request_id, sms_text, phone_number, spam_score, verdict,
-                confidence, url_threat, urls_found, model_version,
-                inference_mode, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                request_id, sms_text, phone_number, spam_score, verdict,
-                confidence, int(url_threat), json.dumps(urls_found),
-                model_version, inference_mode,
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        await db.commit()
+        data = {
+            "request_id": request_id,
+            "sms_text": sms_text,
+            "phone_number": phone_number,
+            "spam_score": spam_score,
+            "verdict": verdict,
+            "confidence": confidence,
+            "url_threat": url_threat,
+            "urls_found": urls_found, # Supabase handles list to JSONB conversion
+            "model_version": model_version,
+            "inference_mode": inference_mode,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        # Ignore errors if request_id already exists (duplicate)
+        supabase.table("predictions").upsert(data, on_conflict="request_id").execute()
     except Exception as e:
-        logger.error(f"Failed to save prediction {request_id}: {e}")
-
+        logger.error(f"Failed to save prediction {request_id} to Supabase: {e}")
 
 async def get_recent_predictions(limit: int = 50) -> List[Dict[str, Any]]:
-    db = await get_db()
-    async with db.execute(
-        "SELECT * FROM predictions ORDER BY created_at DESC LIMIT ?", (limit,)
-    ) as cursor:
-        rows = await cursor.fetchall()
-    return [dict(row) for row in rows]
-
+    supabase = await get_db()
+    try:
+        response = supabase.table("predictions").select("*").order("created_at", desc=True).limit(limit).execute()
+        return response.data
+    except Exception as e:
+        logger.error(f"Failed to get recent predictions: {e}")
+        return []
 
 async def get_stats() -> Dict[str, Any]:
-    db = await get_db()
-    async with db.execute(
-        "SELECT COUNT(*) as total, SUM(verdict='SPAM') as spam, "
-        "SUM(verdict='HAM') as ham, SUM(verdict='SUSPICIOUS') as suspicious "
-        "FROM predictions"
-    ) as cursor:
-        row = await cursor.fetchone()
-    return dict(row) if row else {}
-
+    supabase = await get_db()
+    try:
+        # Simplistic approach since Supabase client doesn't do complex agg easily in one query
+        # For a small dashboard, we fetch all (or limit) and count in memory for now
+        response = supabase.table("predictions").select("verdict").execute()
+        predictions = response.data
+        total = len(predictions)
+        spam = sum(1 for p in predictions if p.get("verdict") == "SPAM")
+        ham = sum(1 for p in predictions if p.get("verdict") == "HAM")
+        suspicious = sum(1 for p in predictions if p.get("verdict") == "SUSPICIOUS")
+        return {"total": total, "spam": spam, "ham": ham, "suspicious": suspicious}
+    except Exception as e:
+        logger.error(f"Failed to get stats: {e}")
+        return {"total": 0, "spam": 0, "ham": 0, "suspicious": 0}
 
 # ── Feedback ──────────────────────────────────────────────────────────────────
 
@@ -141,32 +94,31 @@ async def save_feedback(
     original_verdict: Optional[str] = None,
     user_comment: Optional[str] = None,
 ) -> None:
-    db = await get_db()
+    supabase = await get_db()
     try:
-        await db.execute(
-            """INSERT INTO feedback
-               (request_id, reported_verdict, original_verdict, user_comment, created_at)
-               VALUES (?,?,?,?,?)""",
-            (
-                request_id, reported_verdict, original_verdict, user_comment,
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        await db.commit()
+        data = {
+            "request_id": request_id,
+            "reported_verdict": reported_verdict,
+            "original_verdict": original_verdict,
+            "user_comment": user_comment,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        supabase.table("feedback").insert(data).execute()
     except Exception as e:
         logger.error(f"Failed to save feedback for {request_id}: {e}")
-
 
 # ── URL Cache ─────────────────────────────────────────────────────────────────
 
 async def get_cached_url(url_hash: str) -> Optional[Dict[str, Any]]:
-    db = await get_db()
-    async with db.execute(
-        "SELECT * FROM url_cache WHERE url_hash=?", (url_hash,)
-    ) as cursor:
-        row = await cursor.fetchone()
-    return dict(row) if row else None
-
+    supabase = await get_db()
+    try:
+        response = supabase.table("url_cache").select("*").eq("url_hash", url_hash).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get cached URL: {e}")
+        return None
 
 async def cache_url_result(
     url_hash: str,
@@ -175,36 +127,33 @@ async def cache_url_result(
     malicious_count: int,
     total_engines: int,
 ) -> None:
-    db = await get_db()
+    supabase = await get_db()
     try:
-        await db.execute(
-            """INSERT OR REPLACE INTO url_cache
-               (url_hash, url, is_malicious, malicious_count, total_engines, cached_at)
-               VALUES (?,?,?,?,?,?)""",
-            (
-                url_hash, url, int(is_malicious), malicious_count,
-                total_engines, datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        await db.commit()
+        data = {
+            "url_hash": url_hash,
+            "url": url,
+            "is_malicious": is_malicious,
+            "malicious_count": malicious_count,
+            "total_engines": total_engines,
+            "cached_at": datetime.now(timezone.utc).isoformat()
+        }
+        supabase.table("url_cache").upsert(data, on_conflict="url_hash").execute()
     except Exception as e:
         logger.error(f"Failed to cache URL result: {e}")
 
-
 # ── Legacy compat shims ───────────────────────────────────────────────────────
 
-class SQLiteClient:
+class SupabaseClient:
     """Legacy compat wrapper — used by main.py lifespan."""
     async def connect(self): await get_db()
     async def close(self): await close_db()
-
 
 _db_client = None
 
 async def get_db_client():
     global _db_client
     if _db_client is None:
-        _db_client = SQLiteClient()
+        _db_client = SupabaseClient()
         await _db_client.connect()
     return _db_client
 

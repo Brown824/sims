@@ -5,6 +5,9 @@ import * as tf from '@tensorflow/tfjs';
 import { bundleResourceIO } from '@tensorflow/tfjs-react-native';
 import '@tensorflow/tfjs-react-native';
 
+import * as FileSystem from 'expo-file-system';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 let tfliteModel = null;
 let vocab = null;
 let modelLoaded = false;
@@ -12,34 +15,69 @@ let modelLoaded = false;
 const MAX_LEN = 150;
 
 /**
- * Load the TFLite model and vocab from local assets.
+ * Sync the latest model from the cloud backend.
+ */
+export const syncOfflineModel = async () => {
+  try {
+    const savedUrl = await AsyncStorage.getItem('@sims_api_url') || 'http://10.0.2.2:8000';
+    console.log("Checking for updated model at:", savedUrl);
+    
+    const modelUri = FileSystem.documentDirectory + 'sims_offline.tflite';
+    const vocabUri = FileSystem.documentDirectory + 'vocab.json';
+
+    // Download latest TFLite and Vocab
+    await FileSystem.downloadAsync(`${savedUrl}/api/predict/model/latest`, modelUri);
+    await FileSystem.downloadAsync(`${savedUrl}/api/predict/model/vocab`, vocabUri);
+    
+    console.log("Offline models synced successfully from cloud!");
+    return { modelUri, vocabUri };
+  } catch (error) {
+    console.warn("Failed to sync model from cloud. Relying on local assets.", error.message);
+    return null;
+  }
+};
+
+/**
+ * Load the TFLite model and vocab.
  */
 export const loadOfflineModel = async () => {
   try {
     await tf.ready();
     console.log("TensorFlow.js ready for React Native");
 
-    // Load vocabulary
-    try {
-      const vocabAsset = require('../../assets/vocab.json');
-      vocab = vocabAsset;
-    } catch (e) {
-      console.warn("Could not load vocab.json from assets, using fallback vocab");
-      vocab = { "<PAD>": 0, "<OOV>": 1 };
+    // Attempt to sync first if online (in background)
+    // We will just try loading what we have
+    const modelUri = FileSystem.documentDirectory + 'sims_offline.tflite';
+    const vocabUri = FileSystem.documentDirectory + 'vocab.json';
+    
+    let localModelPath = null;
+    let localVocabPath = null;
+
+    const mInfo = await FileSystem.getInfoAsync(modelUri);
+    const vInfo = await FileSystem.getInfoAsync(vocabUri);
+
+    if (mInfo.exists && vInfo.exists) {
+      localModelPath = `file://${modelUri}`;
+      const vocabStr = await FileSystem.readAsStringAsync(vocabUri);
+      vocab = JSON.parse(vocabStr);
+    } else {
+      // Fallback to assets
+      try {
+        vocab = require('../../assets/vocab.json');
+      } catch (e) {
+        vocab = { "<PAD>": 0, "<OOV>": 1 };
+      }
+      localModelPath = require('../../assets/sims_offline.tflite');
     }
 
     // Load TFLite Model
     try {
-      // In Expo, you might need to use a custom bundler config for .tflite files
-      const modelAsset = require('../../assets/sims_offline.tflite');
-      // For tfjs-tflite, the loadTFLiteModel function is used (requires @tensorflow/tfjs-tflite)
-      // Note: We'll assume the standard tfjs-tflite library is linked.
       const tflite = require('@tensorflow/tfjs-tflite');
-      tfliteModel = await tflite.loadTFLiteModel(modelAsset);
+      tfliteModel = await tflite.loadTFLiteModel(localModelPath);
       modelLoaded = true;
       console.log("Offline TFLite model loaded successfully");
     } catch (e) {
-      console.warn("Could not load sims_offline.tflite from assets, falling back to heuristic", e);
+      console.warn("Could not load sims_offline.tflite, falling back to heuristic", e);
       modelLoaded = false;
     }
 

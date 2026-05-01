@@ -110,6 +110,30 @@ def _heuristic_predict(text: str) -> float:
 
     return min(score, 0.99)
 
+@router.get("/model/latest")
+async def get_latest_model():
+    """Download the latest offline TFLite model."""
+    tflite_path = settings.MODELS_DIR / "sims_offline.tflite"
+    if not tflite_path.exists():
+        raise HTTPException(status_code=404, detail="Model file not found")
+    return FileResponse(
+        path=tflite_path, 
+        media_type="application/octet-stream", 
+        filename="sims_offline.tflite"
+    )
+
+@router.get("/model/vocab")
+async def get_latest_vocab():
+    """Download the latest offline vocab.json."""
+    vocab_path = settings.MODELS_DIR / "vocab.json"
+    if not vocab_path.exists():
+        raise HTTPException(status_code=404, detail="Vocab file not found")
+    return FileResponse(
+        path=vocab_path, 
+        media_type="application/json", 
+        filename="vocab.json"
+    )
+
 @router.post("", response_model=PredictResponse)
 async def predict(request: PredictRequest, _=Depends(rate_limit)):
     """

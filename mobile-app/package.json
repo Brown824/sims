@@ -28,7 +28,8 @@
     "expo-device": "~5.9.3",
     "expo-task-manager": "~11.6.0",
     "expo-background-fetch": "~11.8.1",
-    "@tensorflow/tfjs-tflite": "0.0.1-alpha.9"
+    "@tensorflow/tfjs-tflite": "0.0.1-alpha.9",
+    "expo-file-system": "~16.0.8"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0"
